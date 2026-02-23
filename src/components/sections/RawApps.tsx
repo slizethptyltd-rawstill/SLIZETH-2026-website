@@ -75,22 +75,34 @@ export default function RawApps() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {features.map((feature, index) => (
+          {[{
+            title: "Apps & Code",
+            description: "Scalable, secure, and high-performance web and mobile platforms built with modern frameworks.",
+            imageUrl: "https://images.pexels.com/photos/546819/pexels-photo-546819.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2"
+          }, {
+            title: "AI Integration",
+            description: "Harness the power of AI to automate processes, gain insights, and create intelligent applications.",
+            imageUrl: "https://images.pexels.com/photos/8386440/pexels-photo-8386440.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2"
+          }, {
+            title: "Internet of Things",
+            description: "Connect and manage your devices with our custom IoT solutions, built for reliability and scale.",
+            imageUrl: "https://images.pexels.com/photos/8728381/pexels-photo-8728381.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2"
+          }].map((feature, index) => (
             <motion.div
               key={feature.title}
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: index * 0.1 }}
-              className="p-8 rounded-2xl bg-slate-800/50 border border-slate-700 hover:bg-slate-800 hover:border-teal-500/50 transition-all group"
+              className="rounded-2xl bg-slate-800/50 border border-slate-700 hover:bg-slate-800 hover:border-teal-500/50 transition-all group overflow-hidden"
             >
-              <div className="w-12 h-12 bg-slate-900 rounded-lg flex items-center justify-center text-teal-400 mb-6 group-hover:scale-110 transition-transform border border-slate-700">
-                {feature.icon}
+              <img src={feature.imageUrl} alt={feature.title} className="w-full h-48 object-cover" referrerPolicy="no-referrer" />
+              <div className="p-6">
+                <h4 className="text-xl font-bold mb-3 text-white">{feature.title}</h4>
+                <p className="text-slate-400 leading-relaxed">
+                  {feature.description}
+                </p>
               </div>
-              <h4 className="text-xl font-bold mb-3 text-white">{feature.title}</h4>
-              <p className="text-slate-400 leading-relaxed">
-                {feature.description}
-              </p>
             </motion.div>
           ))}
         </div>

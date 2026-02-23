@@ -1,16 +1,27 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Upload, FileText, X, Download, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { jsPDF } from 'jspdf';
+import { GoogleGenAI } from '@google/genai';
 
 export default function Tools() {
   const [images, setImages] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [isConverting, setIsConverting] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
+  const [autoCrop, setAutoCrop] = useState(false);
+  const [alignPages, setAlignPages] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Track active preview URLs to revoke on unmount
   const previewsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn('Gemini API key not found. AI features will be disabled.');
+    }
+  }, []);
   
   useEffect(() => {
     previewsRef.current = previews;
@@ -24,12 +35,31 @@ export default function Tools() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
+      setIsAdding(true);
       const newFiles = Array.from(e.target.files) as File[];
-      setImages(prev => [...prev, ...newFiles]);
       
-      const newPreviews = newFiles.map(file => URL.createObjectURL(file));
-      setPreviews(prev => [...prev, ...newPreviews]);
+      // To better simulate loading, process files with a short delay
+      setTimeout(() => {
+        setImages(prev => [...prev, ...newFiles]);
+        const newPreviews = newFiles.map(file => URL.createObjectURL(file));
+        setPreviews(prev => [...prev, ...newPreviews]);
+        setIsAdding(false);
+      }, 500); // Simulate network/processing delay
     }
+  };
+
+  const onDragEnd = (result: any) => {
+    if (!result.destination) return;
+    const items = Array.from(images);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+
+    const previewItems = Array.from(previews);
+    const [reorderedPreview] = previewItems.splice(result.source.index, 1);
+    previewItems.splice(result.destination.index, 0, reorderedPreview);
+
+    setImages(items);
+    setPreviews(previewItems);
   };
 
   const removeImage = (index: number) => {
@@ -41,6 +71,52 @@ export default function Tools() {
     });
   };
 
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+
+  const fileToGenerativePart = async (file: File) => {
+    const base64EncodedDataPromise = new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+      reader.readAsDataURL(file);
+    });
+    return {
+      inlineData: {
+        data: await base64EncodedDataPromise,
+        mimeType: file.type,
+      },
+    };
+  };
+
+  const processImageWithAI = async (imageFile: File): Promise<string> => {
+    if (!process.env.GEMINI_API_KEY) {
+      alert('Gemini API key is not configured.');
+      throw new Error('Gemini API key not found.');
+    }
+
+    const model = 'gemini-flash-latest';
+    const imagePart = await fileToGenerativePart(imageFile);
+
+    let prompt = 'Analyze the image.';
+    if (autoCrop && alignPages) {
+      prompt = 'Autocrop and align the document in the image. Return only the processed image.';
+    } else if (autoCrop) {
+      prompt = 'Autocrop the document in the image. Return only the processed image.';
+    } else if (alignPages) {
+      prompt = 'Align the document in the image. Return only the processed image.';
+    }
+
+    const result = await ai.models.generateContent({ model, contents: { parts: [imagePart, { text: prompt }] } });
+    // Assuming the API returns the processed image data in a specific format.
+    // This part might need adjustment based on the actual API response structure.
+    const processedImagePart = result.candidates?.[0].content.parts.find(part => part.inlineData);
+    if (processedImagePart && processedImagePart.inlineData) {
+      return `data:${processedImagePart.inlineData.mimeType};base64,${processedImagePart.inlineData.data}`;
+    }
+    
+    // Fallback to original image if AI processing fails
+    return URL.createObjectURL(imageFile);
+  };
+
   const convertToPdf = async () => {
     if (images.length === 0) return;
     setIsConverting(true);
@@ -50,7 +126,16 @@ export default function Tools() {
       
       for (let i = 0; i < images.length; i++) {
         const image = images[i];
-        const imageUrl = previews[i];
+        let imageUrl = previews[i];
+
+        if (autoCrop || alignPages) {
+          try {
+            imageUrl = await processImageWithAI(image);
+          } catch (error) {
+            console.error(`AI processing failed for image ${i}:`, error);
+            // Optionally, notify the user that AI processing failed for this image
+          }
+        }
         
         // Create an image element to get dimensions
         const img = new Image();
@@ -123,6 +208,21 @@ export default function Tools() {
                     <p className="text-xs text-slate-500">Client-side processing • No uploads</p>
                   </div>
                 </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center">
+                    <input id="autocrop" type="checkbox" checked={autoCrop} onChange={(e) => setAutoCrop(e.target.checked)} disabled={!process.env.GEMINI_API_KEY} className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 disabled:cursor-not-allowed disabled:text-gray-400" />
+                    <label htmlFor="autocrop" className="ml-2 block text-sm text-slate-700">Auto-crop</label>
+                  </div>
+                  <div className="flex items-center">
+                    <input id="align" type="checkbox" checked={alignPages} onChange={(e) => setAlignPages(e.target.checked)} disabled={!process.env.GEMINI_API_KEY} className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 disabled:cursor-not-allowed disabled:text-gray-400" />
+                    <label htmlFor="align" className="ml-2 block text-sm text-slate-700">Align Pages</label>
+                  </div>
+                  </div>
+                  {!process.env.GEMINI_API_KEY && (
+                    <div className="text-xs text-amber-600 bg-amber-50 p-2 rounded-md border border-amber-200 mt-4">
+                      AI features are disabled. Please configure your Gemini API key to enable them.
+                    </div>
+                  )}
                 {images.length > 0 && (
                   <button 
                     onClick={() => {
@@ -150,29 +250,51 @@ export default function Tools() {
                   <p className="text-slate-500 text-sm">Supports JPG, PNG, WEBP</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
-                  {previews.map((url, idx) => (
-                    <div key={idx} className="relative group aspect-[3/4] rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
-                      <img src={url} alt={`Preview ${idx}`} className="w-full h-full object-cover" />
-                      <button 
-                        onClick={() => removeImage(idx)}
-                        className="absolute top-2 right-2 p-1 bg-white/90 text-slate-700 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                      <div className="absolute bottom-2 left-2 px-2 py-1 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
-                        Page {idx + 1}
+                <DragDropContext onDragEnd={onDragEnd}>
+                  <Droppable droppableId="previews" direction="horizontal">
+                    {(provided) => (
+                      <div {...provided.droppableProps} ref={provided.innerRef} className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-8">
+                        {previews.map((url, idx) => (
+                          <Draggable key={url} draggableId={url} index={idx}>
+                            {(provided) => (
+                              <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}>
+                                <div className="relative group aspect-[3/4] rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+                                  <img src={url} alt={`Preview ${idx}`} className="w-full h-full object-cover" />
+                                  <button 
+                                    onClick={() => removeImage(idx)}
+                                    className="absolute top-2 right-2 p-1 bg-white/90 text-slate-700 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"
+                                  >
+                                    <X className="w-4 h-4" />
+                                  </button>
+                                  <div className="absolute bottom-2 left-2 px-2 py-1 bg-black/50 text-white text-[10px] rounded backdrop-blur-sm">
+                                    Page {idx + 1}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                        {isAdding && [...Array(3)].map((_, i) => (
+                          <div key={`loader-${i}`} className="aspect-[3/4] rounded-lg bg-slate-100 animate-pulse"></div>
+                        ))}
+                        <div 
+                          onClick={() => !isAdding && fileInputRef.current?.click()}
+                          className={`aspect-[3/4] rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center transition-all text-slate-400 ${isAdding ? 'cursor-not-allowed bg-slate-50' : 'cursor-pointer hover:border-teal-500 hover:bg-teal-50/30 hover:text-teal-600'}`}
+                        >
+                          {isAdding ? (
+                            <Loader2 className="w-6 h-6 animate-spin" />
+                          ) : (
+                            <>
+                              <Upload className="w-6 h-6 mb-2" />
+                              <span className="text-xs font-medium">Add Page</span>
+                            </>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                  <div 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="aspect-[3/4] rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center cursor-pointer hover:border-teal-500 hover:bg-teal-50/30 transition-all text-slate-400 hover:text-teal-600"
-                  >
-                    <Upload className="w-6 h-6 mb-2" />
-                    <span className="text-xs font-medium">Add Page</span>
-                  </div>
-                </div>
+                    )}
+                  </Droppable>
+                </DragDropContext>
               )}
               
               <input 
